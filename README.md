@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	ghwalk.Walk(context.TODO(), "magodo", "ghwalk", "", nil,
+	ghwalk.Walk(context.TODO(), "magodo", "ghwalk", "testdata", nil,
 		func(path string, info *ghwalk.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -35,16 +35,12 @@ func main() {
 Output:
 
 ```bash
-.gitignore
-README.md
-ghwalk.go
-ghwalk_test.go
-go.mod
-go.sum
 testdata
 testdata/a
 testdata/b
-testdata/link_a
+testdata/dir
+testdata/dir/c
+testdata/link_dir
 ```
 
 ### Enable File Only Info
