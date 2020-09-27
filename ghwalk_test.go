@@ -26,20 +26,9 @@ func TestFoo(t *testing.T) {
 		repo       string
 		path       string
 		expectPath []string
-		skipError bool
-		isError bool
+		skipError  bool
+		isError    bool
 	}{
-		{
-			owner: "magodo",
-			repo:  "ghwalk",
-			expectPath: []string{
-				"",
-				"testdata",
-				"testdata/a",
-				"testdata/b",
-				"testdata/link_a",
-			},
-		},
 		{
 			owner: "magodo",
 			repo:  "ghwalk",
@@ -52,16 +41,16 @@ func TestFoo(t *testing.T) {
 			},
 		},
 		{
-			owner: "magodo",
-			repo:  "ghwalk",
-			path:  "testdata/non_existent",
+			owner:   "magodo",
+			repo:    "ghwalk",
+			path:    "testdata/non_existent",
 			isError: true,
 		},
 		{
-			owner: "magodo",
-			repo:  "ghwalk",
-			path:  "testdata/non_existent",
-			skipError: true,
+			owner:      "magodo",
+			repo:       "ghwalk",
+			path:       "testdata/non_existent",
+			skipError:  true,
 			expectPath: []string{},
 		},
 	}
@@ -79,6 +68,12 @@ func TestFoo(t *testing.T) {
 					}
 					return err
 				}
+
+				// skip repo root since no info is got
+				if info == nil {
+					return nil
+				}
+
 				traversedPath = append(traversedPath, path)
 				return nil
 			})
