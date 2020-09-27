@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestFoo(t *testing.T) {
+func TestWalk(t *testing.T) {
 	cases := []struct {
 		owner      string
 		repo       string
@@ -37,7 +37,9 @@ func TestFoo(t *testing.T) {
 				"testdata",
 				"testdata/a",
 				"testdata/b",
-				"testdata/link_a",
+				"testdata/dir",
+				"testdata/dir/c",
+				"testdata/link_dir",
 			},
 		},
 		{
@@ -81,6 +83,52 @@ func TestFoo(t *testing.T) {
 			require.Error(t, err)
 			continue
 		}
+		require.NoError(t, err)
+		require.Equal(t, c.expectPath, traversedPath)
+	}
+}
+
+func TestWalkWithFileOnlyInfo(t *testing.T) {
+	cases := []struct {
+		owner      string
+		repo       string
+		path       string
+		expectPath []string
+	}{
+		{
+			owner: "magodo",
+			repo:  "ghwalk",
+			path:  "testdata",
+			expectPath: []string{
+				"testdata",
+				"testdata/a",
+				"testdata/b",
+				"testdata/dir",
+				"testdata/dir/c",
+				"testdata/link_dir",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		traversedPath := []string{}
+		ctx, _ := context.WithTimeout(context.Background(), 20*time.Second)
+		err := Walk(ctx,
+			c.owner, c.repo, c.path,
+			&WalkOptions{Token: githubToken, EnableFileOnlyInfo: true},
+			func(path string, info *FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				// skip repo root since no info is got
+				if info == nil {
+					return nil
+				}
+
+				traversedPath = append(traversedPath, path)
+				return nil
+			})
 		require.NoError(t, err)
 		require.Equal(t, c.expectPath, traversedPath)
 	}

@@ -23,46 +23,54 @@ type WalkOptions struct {
 
 	// Github git ref, can be a SHA, branch or a tag
 	Ref string
+
+	// FileInfo of file (rather than dir) will contain file only FileInfo's
+	EnableFileOnlyInfo bool
 }
+
+type FileType string
+
+const (
+	FileTypeFile    FileType = "file"
+	FileTypeDir     FileType = "dir"
+	FileTypeSymlink FileType = "symlink"
+)
 
 type FileInfo struct {
 	raw github.RepositoryContent
 
-	Type string
-
-	// Target is only set if the type is "symlink" and the target is not a normal file.
-	// If Target is set, Path will be the symlink path.
-	Target *string
-
-	// Only available for file type
-	Encoding *string
-
-	Size int
-	Name string
-	Path string
-
-	// Content contains the actual file content, which may be encoded.
-	// Callers should call GetContent which will decode the content if
-	// necessary.
-	//
-	// Only available for file type
-	Content *string
-
+	Type    FileType
+	Size    int
+	Name    string
+	Path    string
 	SHA     string
 	URL     string
 	GitURL  string
 	HTMLURL string
 
-	// Only available for file type
-	DownloadURL *string
+	FileOnlyInfo *FileOnlyInfo
+}
+
+type FileOnlyInfo struct {
+	// Target is only set if the type is "symlink" and the target is not a normal file.
+	Target *string
+	// Encoding is only set if the type is "file" (but not "symlink")
+	Encoding *string
+	// Content contains the actual file content, which may be encoded.
+	// Callers should call GetContent which will decode the content if
+	// necessary.
+	//
+	// Content is only set if the type is "file" (but not "symlink")
+	Content     *string
+	DownloadURL string
+}
+
+func (f *FileInfo) IsDir() bool {
+	return f.Type == FileTypeDir
 }
 
 func (f *FileInfo) GetContent() (string, error) {
 	return f.raw.GetContent()
-}
-
-func (f *FileInfo) IsDir() bool {
-	return f.Type == "dir"
 }
 
 // WalkFunc is the type of the function called for each file or directory
@@ -104,16 +112,11 @@ func Walk(ctx context.Context, owner, repo, path string, opt *WalkOptions, walkF
 
 	client := github.NewClient(tc)
 
-	var getOpt *github.RepositoryContentGetOptions
-	if opt != nil && opt.Ref != "" {
-		getOpt = &github.RepositoryContentGetOptions{Ref: opt.Ref}
-	}
-
-	info, err := stat(ctx, owner, repo, path, client, getOpt)
+	info, err := stat(ctx, owner, repo, path, client, opt)
 	if err != nil {
 		err = walkFn(path, nil, err)
 	} else {
-		err = walk(ctx, owner, repo, path, client, getOpt, info, walkFn)
+		err = walk(ctx, owner, repo, path, client, opt, info, walkFn)
 	}
 
 	if err == SkipDir {
@@ -122,13 +125,13 @@ func Walk(ctx context.Context, owner, repo, path string, opt *WalkOptions, walkF
 	return err
 }
 
-func walk(ctx context.Context, owner, repo, path string, client *github.Client, opt *github.RepositoryContentGetOptions, info *FileInfo, walkFn WalkFunc) error {
+func walk(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions, info *FileInfo, walkFn WalkFunc) error {
 	// If walk is called against the repo root, the info is nil
 	if info != nil && !info.IsDir() {
 		return walkFn(path, info, nil)
 	}
 
-	names, err := readDirNames(ctx, owner, repo, path, client, opt)
+	names, err := readDirNames(ctx, owner, repo, path, client, newRepositoryGetContentOptions(opt))
 	err1 := walkFn(path, info, err)
 	// If err != nil, walk can't walk into this directory.
 	// err1 != nil means walkFn want walk to skip this directory or stop walking.
@@ -160,25 +163,32 @@ func walk(ctx context.Context, owner, repo, path string, client *github.Client, 
 	return nil
 }
 
-func newFileInfo(c github.RepositoryContent) *FileInfo {
-	return &FileInfo{
-		raw:         c,
-		Type:        *c.Type,
-		Target:      c.Target,
-		Encoding:    c.Encoding,
-		Size:        *c.Size,
-		Name:        *c.Name,
-		Path:        *c.Path,
-		Content:     c.Content,
-		SHA:         *c.SHA,
-		URL:         *c.URL,
-		GitURL:      *c.GitURL,
-		HTMLURL:     *c.HTMLURL,
-		DownloadURL: c.DownloadURL,
+func newFileInfo(c github.RepositoryContent, includeDetail bool) *FileInfo {
+	fileinfo := &FileInfo{
+		raw:     c,
+		Type:    FileType(*c.Type),
+		Size:    *c.Size,
+		Name:    *c.Name,
+		Path:    *c.Path,
+		SHA:     *c.SHA,
+		URL:     *c.URL,
+		GitURL:  *c.GitURL,
+		HTMLURL: *c.HTMLURL,
 	}
+
+	if includeDetail {
+		fileinfo.FileOnlyInfo = &FileOnlyInfo{
+			Encoding:    c.Encoding,
+			Content:     c.Content,
+			Target:      c.Target,
+			DownloadURL: *c.DownloadURL,
+		}
+	}
+
+	return fileinfo
 }
 
-func stat(ctx context.Context, owner, repo, path string, client *github.Client, opt *github.RepositoryContentGetOptions) (*FileInfo, error) {
+func stat(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions) (*FileInfo, error) {
 	// The root directory of the repo has no meta info
 	if path == "" {
 		return nil, nil
@@ -191,7 +201,7 @@ func stat(ctx context.Context, owner, repo, path string, client *github.Client, 
 		parentPath = ""
 	}
 
-	_, dircontent, _, err := client.Repositories.GetContents(ctx, owner, repo, parentPath, opt)
+	_, dircontent, _, err := client.Repositories.GetContents(ctx, owner, repo, parentPath, newRepositoryGetContentOptions(opt))
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +211,17 @@ func stat(ctx context.Context, owner, repo, path string, client *github.Client, 
 			continue
 		}
 		if *content.Name == filepath.Base(path) {
-			return newFileInfo(*content), nil
+			fileInfo := newFileInfo(*content, false)
+
+			// users specify to enable file only info, then we need to invoke another API call against the path to the file
+			if !fileInfo.IsDir() && opt != nil && opt.EnableFileOnlyInfo {
+				filecontent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, newRepositoryGetContentOptions(opt))
+				if err != nil {
+					return nil, err
+				}
+				return newFileInfo(*filecontent, true), nil
+			}
+			return fileInfo, nil
 		}
 	}
 
@@ -219,4 +239,13 @@ func readDirNames(ctx context.Context, owner, repo, path string, client *github.
 	}
 	sort.Strings(entries)
 	return entries, nil
+}
+
+func newRepositoryGetContentOptions(opt *WalkOptions) *github.RepositoryContentGetOptions {
+	if opt == nil {
+		return nil
+	}
+	return &github.RepositoryContentGetOptions{
+		Ref: opt.Ref,
+	}
 }
