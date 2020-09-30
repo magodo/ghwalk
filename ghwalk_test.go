@@ -29,6 +29,7 @@ func TestWalk(t *testing.T) {
 		skipError  bool
 		isError    bool
 		reverse    bool
+		filterFn   PathFilterFunc
 	}{
 		{
 			owner: "magodo",
@@ -55,6 +56,20 @@ func TestWalk(t *testing.T) {
 				"testdata/dir/c",
 				"testdata/b",
 				"testdata/a",
+			},
+		},
+		{
+			owner: "magodo",
+			repo:  "ghwalk",
+			path:  "testdata",
+			filterFn: func(path string, info *FileInfo) bool {
+				return info != nil && info.IsDir() && path != "testdata"
+			},
+			expectPath: []string{
+				"testdata",
+				"testdata/a",
+				"testdata/b",
+				"testdata/link_dir",
 			},
 		},
 		{
@@ -93,7 +108,8 @@ func TestWalk(t *testing.T) {
 
 				traversedPath = append(traversedPath, path)
 				return nil
-			})
+			},
+			c.filterFn)
 		if c.isError {
 			require.Error(t, err)
 			continue
@@ -143,7 +159,8 @@ func TestWalkWithFileOnlyInfo(t *testing.T) {
 
 				traversedPath = append(traversedPath, path)
 				return nil
-			})
+			},
+			nil)
 		require.NoError(t, err)
 		require.Equal(t, c.expectPath, traversedPath)
 	}

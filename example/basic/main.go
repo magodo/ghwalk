@@ -21,5 +21,5 @@ func main() {
 
 			fmt.Printf("%s\n", path)
 			return nil
-		})
+		}, nil)
 }

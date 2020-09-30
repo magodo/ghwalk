@@ -42,7 +42,8 @@ func main() {
 				fmt.Printf("%s\n%s -> %s (%s)\n%s\n", sep, info.Path, *info.FileOnlyInfo.Target, info.Type, sep)
 			}
 			return nil
-		}); err != nil {
+		},
+		nil); err != nil {
 		log.Fatal(err)
 	}
 }

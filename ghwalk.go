@@ -96,13 +96,19 @@ func (f *FileInfo) GetContent() (string, error) {
 // of the repository.
 type WalkFunc func(path string, info *FileInfo, err error) error
 
+// PathFilterFunc allows users to filter a file/directory before sending any Github API to retrieve its metadata, if it returns true.
+// This is useful when you know some pattern of the target path to walk, this can speed up the process by early skip those unrelated
+// files/directories without sending any API.
+type PathFilterFunc func(path string, info *FileInfo) bool
+
 // Walk walks the github repository tree, calling walkFn for each file or
 // directory in the tree, including the path specified. All errors that arise
 // visiting files and directories are filtered by walkFn. The files are walked in
 // lexical order, which makes the output deterministic but means that for very
 // large directories Walk can be inefficient.
 // Walk does not follow symbolic links.
-func Walk(ctx context.Context, owner, repo, path string, opt *WalkOptions, walkFn WalkFunc) error {
+func Walk(ctx context.Context, owner, repo, path string, opt *WalkOptions, walkFn WalkFunc, filterFn PathFilterFunc) error {
+
 	var tc *http.Client
 
 	// construct the github client
@@ -119,7 +125,10 @@ func Walk(ctx context.Context, owner, repo, path string, opt *WalkOptions, walkF
 	if err != nil {
 		err = walkFn(path, nil, err)
 	} else {
-		err = walk(ctx, owner, repo, path, client, opt, info, walkFn)
+		if filterFn != nil && filterFn(path, info) {
+			return nil
+		}
+		err = walk(ctx, owner, repo, path, client, opt, info, walkFn, filterFn)
 	}
 
 	if err == SkipDir {
@@ -128,13 +137,13 @@ func Walk(ctx context.Context, owner, repo, path string, opt *WalkOptions, walkF
 	return err
 }
 
-func walk(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions, info *FileInfo, walkFn WalkFunc) error {
+func walk(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions, info *FileInfo, walkFn WalkFunc, filterFn PathFilterFunc) error {
 	// If walk is called against the repo root, the info is nil
 	if info != nil && !info.IsDir() {
 		return walkFn(path, info, nil)
 	}
 
-	names, err := readDirNames(ctx, owner, repo, path, client, opt)
+	entries, err := readDirEntries(ctx, owner, repo, path, client, opt)
 	err1 := walkFn(path, info, err)
 	// If err != nil, walk can't walk into this directory.
 	// err1 != nil means walkFn want walk to skip this directory or stop walking.
@@ -147,15 +156,20 @@ func walk(ctx context.Context, owner, repo, path string, client *github.Client, 
 		return err1
 	}
 
-	for _, name := range names {
-		filename := filepath.Join(path, name)
+	for _, entry := range entries {
+		filename := filepath.Join(path, entry.Name)
+
+		if filterFn != nil && filterFn(filename, &entry) {
+			continue
+		}
+
 		fileInfo, err := stat(ctx, owner, repo, filename, client, opt)
 		if err != nil {
 			if err := walkFn(filename, fileInfo, err); err != nil && err != SkipDir {
 				return err
 			}
 		} else {
-			err = walk(ctx, owner, repo, filename, client, opt, fileInfo, walkFn)
+			err = walk(ctx, owner, repo, filename, client, opt, fileInfo, walkFn, filterFn)
 			if err != nil {
 				if !fileInfo.IsDir() || err != SkipDir {
 					return err
@@ -231,19 +245,27 @@ func stat(ctx context.Context, owner, repo, path string, client *github.Client, 
 	return nil, fmt.Errorf("no such path found: %s", path)
 }
 
-func readDirNames(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions) ([]string, error) {
+func readDirEntries(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions) ([]FileInfo, error) {
 	_, dircontent, _, err := client.Repositories.GetContents(ctx, owner, repo, path, newRepositoryGetContentOptions(opt))
 	if err != nil {
 		return nil, err
 	}
-	entries := []string{}
+	entryNames := make([]string, 0, len(dircontent))
+	entryMap := map[string]FileInfo{}
 	for _, content := range dircontent {
-		entries = append(entries, *content.Name)
+		entryMap[*content.Name] = *newFileInfo(*content, false)
+		entryNames = append(entryNames, *content.Name)
 	}
+
 	if opt != nil && opt.Reverse {
-		sort.Sort(sort.Reverse(sort.StringSlice(entries)))
+		sort.Sort(sort.Reverse(sort.StringSlice(entryNames)))
 	} else {
-		sort.Strings(entries)
+		sort.Strings(entryNames)
+	}
+
+	entries := make([]FileInfo, 0, len(entryMap))
+	for _, name := range entryNames {
+		entries = append(entries, entryMap[name])
 	}
 	return entries, nil
 }
