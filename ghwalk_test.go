@@ -28,6 +28,7 @@ func TestWalk(t *testing.T) {
 		expectPath []string
 		skipError  bool
 		isError    bool
+		reverse    bool
 	}{
 		{
 			owner: "magodo",
@@ -40,6 +41,20 @@ func TestWalk(t *testing.T) {
 				"testdata/dir",
 				"testdata/dir/c",
 				"testdata/link_dir",
+			},
+		},
+		{
+			owner:   "magodo",
+			repo:    "ghwalk",
+			path:    "testdata",
+			reverse: true,
+			expectPath: []string{
+				"testdata",
+				"testdata/link_dir",
+				"testdata/dir",
+				"testdata/dir/c",
+				"testdata/b",
+				"testdata/a",
 			},
 		},
 		{
@@ -62,7 +77,7 @@ func TestWalk(t *testing.T) {
 		ctx, _ := context.WithTimeout(context.Background(), 20*time.Second)
 		err := Walk(ctx,
 			c.owner, c.repo, c.path,
-			&WalkOptions{Token: githubToken},
+			&WalkOptions{Token: githubToken, Reverse: c.reverse},
 			func(path string, info *FileInfo, err error) error {
 				if err != nil {
 					if c.skipError {

@@ -26,6 +26,9 @@ type WalkOptions struct {
 
 	// FileInfo of file (rather than dir) will contain file only FileInfo's
 	EnableFileOnlyInfo bool
+
+	// Reverse search ordering
+	Reverse bool
 }
 
 type FileType string
@@ -131,7 +134,7 @@ func walk(ctx context.Context, owner, repo, path string, client *github.Client, 
 		return walkFn(path, info, nil)
 	}
 
-	names, err := readDirNames(ctx, owner, repo, path, client, newRepositoryGetContentOptions(opt))
+	names, err := readDirNames(ctx, owner, repo, path, client, opt)
 	err1 := walkFn(path, info, err)
 	// If err != nil, walk can't walk into this directory.
 	// err1 != nil means walkFn want walk to skip this directory or stop walking.
@@ -228,8 +231,8 @@ func stat(ctx context.Context, owner, repo, path string, client *github.Client, 
 	return nil, fmt.Errorf("no such path found: %s", path)
 }
 
-func readDirNames(ctx context.Context, owner, repo, path string, client *github.Client, opt *github.RepositoryContentGetOptions) ([]string, error) {
-	_, dircontent, _, err := client.Repositories.GetContents(ctx, owner, repo, path, opt)
+func readDirNames(ctx context.Context, owner, repo, path string, client *github.Client, opt *WalkOptions) ([]string, error) {
+	_, dircontent, _, err := client.Repositories.GetContents(ctx, owner, repo, path, newRepositoryGetContentOptions(opt))
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +240,11 @@ func readDirNames(ctx context.Context, owner, repo, path string, client *github.
 	for _, content := range dircontent {
 		entries = append(entries, *content.Name)
 	}
-	sort.Strings(entries)
+	if opt != nil && opt.Reverse {
+		sort.Sort(sort.Reverse(sort.StringSlice(entries)))
+	} else {
+		sort.Strings(entries)
+	}
 	return entries, nil
 }
 
